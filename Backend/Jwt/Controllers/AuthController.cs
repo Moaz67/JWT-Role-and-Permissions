@@ -1,10 +1,12 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Security.Permissions;
 using System.Text;
 
 namespace Jwt.Controllers
@@ -15,9 +17,11 @@ namespace Jwt.Controllers
     public class AuthController : ControllerBase
     {
         private readonly IConfiguration _configuration;
-        public AuthController(IConfiguration configuration)
+        private readonly UserDbContext _userDbContext;
+        public AuthController(IConfiguration configuration,UserDbContext userDbContext)
         {
             _configuration = configuration;
+            _userDbContext = userDbContext;
         }
 
         public static User User = new User();
@@ -25,10 +29,16 @@ namespace Jwt.Controllers
         public async Task<ActionResult<User>> Register(UserDto request)
         {
             CreatePasswordHash(request.Password, out byte[] passwordHash, out byte[] passwordSalt);
-            User.Username = request.Username;
-            User.PasswordHash = passwordHash;
-            User.PasswordSalt = passwordSalt;
-            return Ok(User);
+            var user = new User
+            {
+                Username = request.Username,
+                PasswordHash = passwordHash,
+                PasswordSalt = passwordSalt
+            };
+            _userDbContext.Users.Add(user);
+            await _userDbContext.SaveChangesAsync();
+
+            return Ok(user);
 
         }
         private void CreatePasswordHash(string password, out byte[] passwordHash, out byte[] passwordSalt)
@@ -42,15 +52,19 @@ namespace Jwt.Controllers
         [HttpPost("login")]
         public async Task<ActionResult<string>> Login(UserDto request)
         {
-            if (User.Username != request.Username)
+            var user = await _userDbContext.Users.FirstOrDefaultAsync(u => u.Username == request.Username);
+
+            if (user == null)
             {
                 return BadRequest("User not found.");
             }
-            if (!VerifyPasswordHash(request.Password, User.PasswordHash, User.PasswordSalt))
+
+            if (!VerifyPasswordHash(request.Password, user.PasswordHash, user.PasswordSalt))
             {
                 return BadRequest("Wrong Password");
             }
-            string token = CreateToken(User);
+
+            string token = CreateToken(user);
             return Ok(token);
         }
         private string CreateToken(User user)
@@ -74,6 +88,27 @@ namespace Jwt.Controllers
                 var computedHash = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(password));
                 return computedHash.SequenceEqual(passwordHash);
             }
+
+        }
+        [HttpGet("getdata")]
+        public async Task<ActionResult> getdata()
+        {
+            var usercount =await _userDbContext.Users.CountAsync();
+            var Rolecount =await _userDbContext.Roles.CountAsync();
+            var Permissioncount =await _userDbContext.Permissions.CountAsync();
+            var userdata =await _userDbContext.Users.ToListAsync();
+            var Roles=await _userDbContext.Roles.ToListAsync();
+            var Permissions=await _userDbContext.Permissions.ToListAsync();
+
+            return Ok(new
+            {
+                UserCount = usercount,
+                RoleCount = Rolecount,
+                PermissionCount = Permissioncount,
+                Users = userdata,
+                Roles = Roles,
+                Permissions = Permissions
+            });
 
         }
     }
